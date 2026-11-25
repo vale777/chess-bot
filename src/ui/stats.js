@@ -1,5 +1,6 @@
 import { allAnalyzed } from "../store.js";
-import { scoreGame, estimateElo } from "../metrics.js";
+import { estimateElo } from "../metrics.js";
+import { buildReport } from "../report.js";
 import { esc, fmtPct, fmtDate, RESULT_LABEL, TIME_ICON } from "./util.js";
 
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
@@ -12,9 +13,10 @@ function aggregate(rows) {
     accuracy: mean(rows.map((r) => r.s.accuracy)),
     acpl,
     elo: estimateElo(acpl),
-    blunders: n ? rows.reduce((a, r) => a + r.s.blunders, 0) / n : null,
-    mistakes: n ? rows.reduce((a, r) => a + r.s.mistakes, 0) / n : null,
-    missed: n ? rows.reduce((a, r) => a + r.s.missed, 0) / n : null,
+    blunders: n ? rows.reduce((a, r) => a + r.c.blunder, 0) / n : null,
+    mistakes: n ? rows.reduce((a, r) => a + r.c.mistake, 0) / n : null,
+    missed: n ? rows.reduce((a, r) => a + r.c.miss, 0) / n : null,
+    brilliant: n ? rows.reduce((a, r) => a + r.c.brilliant + r.c.great, 0) / n : null,
     rating: mean(rows.map((r) => r.game.me.rating)),
   };
 }
@@ -27,8 +29,14 @@ export async function renderStats(root) {
     return;
   }
 
-  const rows = items
-    .map(({ game, analysis }) => ({ game, s: scoreGame(analysis.evals, analysis.firstMover).summary[game.myColor] }))
+  const rows = (
+    await Promise.all(
+      items.map(async ({ game, analysis }) => {
+        const rep = await buildReport(game, analysis);
+        return { game, s: rep.scored.summary[game.myColor], c: rep.counts[game.myColor] };
+      })
+    )
+  )
     .filter((r) => r.s.moves > 0)
     .sort((a, b) => a.game.endTime - b.game.endTime);
 
@@ -46,7 +54,7 @@ export async function renderStats(root) {
       ${tile(fmtPct(all.accuracy) + "%", "Average accuracy")}
       ${tile(all.elo ?? "–", "Estimated Elo*", `chess.com rating avg ${Math.round(all.rating)}`)}
       ${tile(Math.round(all.acpl), "Avg. centipawn loss")}
-      ${tile(all.blunders.toFixed(1), "Blunders / game", `${all.mistakes.toFixed(1)} mistakes · ${all.missed.toFixed(1)} missed chances`)}
+      ${tile(all.blunders.toFixed(1), "Blunders / game", `${all.mistakes.toFixed(1)} mistakes · ${all.missed.toFixed(1)} misses · ${all.brilliant.toFixed(1)} brilliant/great`)}
     </div>
     <div class="card">
       <h3>Accuracy per game</h3>
@@ -67,14 +75,14 @@ export async function renderStats(root) {
     <div class="card">
       <h3>Analyzed games</h3>
       <div class="table-wrap"><table class="datatable">
-        <thead><tr><th>Date</th><th>Opponent</th><th>Result</th><th>Accuracy</th><th>??</th><th>?</th><th>💡</th></tr></thead>
+        <thead><tr><th>Date</th><th>Opponent</th><th>Result</th><th>Accuracy</th><th title="Brilliant">!!</th><th title="Great">!</th><th title="Mistakes">?</th><th title="Misses">✗</th><th title="Blunders">??</th></tr></thead>
         <tbody>${[...rows]
           .reverse()
           .map(
             (r) => `<tr><td>${fmtDate(r.game.endTime)}</td>
             <td><a href="#/game/${encodeURIComponent(r.game.id)}">${esc(r.game.opp.name)}</a> <span class="muted">(${r.game.opp.rating})</span></td>
             <td class="${r.game.outcome}">${RESULT_LABEL[r.game.outcome]}</td><td>${fmtPct(r.s.accuracy)}%</td>
-            <td>${r.s.blunders}</td><td>${r.s.mistakes}</td><td>${r.s.missed}</td></tr>`
+            <td>${r.c.brilliant}</td><td>${r.c.great}</td><td>${r.c.mistake}</td><td>${r.c.miss}</td><td>${r.c.blunder}</td></tr>`
           )
           .join("")}</tbody>
       </table></div>

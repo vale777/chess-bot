@@ -14,7 +14,7 @@ export async function renderSettings(root) {
         <select name="depth">
           ${[10, 12, 14, 16, 18, 20].map((d) => `<option ${d === s.depth ? "selected" : ""}>${d}</option>`).join("")}
         </select>
-        <span class="muted small">Higher is more accurate but slower. 12 is good on a phone, 16 on a computer.</span>
+        <span class="muted small">Higher is more accurate but slower. 12 is good on a phone, 14 on a computer. The accuracy formula was calibrated at depth 12.</span>
       </label>
       <button class="primary">Save</button>
       <span id="saved" class="muted small"></span>

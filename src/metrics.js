@@ -1,133 +1,106 @@
-// Pure scoring functions. Formulas follow Lichess' open-source accuracy model
-// (chess.com's "CAPS" is proprietary, so numbers will be close but not identical).
+// Pure scoring functions.
 //
-// An "eval" is always from WHITE's point of view: { cp: number } or { mate: number }
+// Accuracy model: chess.com's "CAPS" formula is proprietary, so this model was
+// FITTED to chess.com's own published accuracies: 477 public games (946 player
+// results, ratings from <300 to 2900) analyzed with the same Stockfish build
+// this site uses. On held-out games the mean error dropped from 7.5 points
+// (Lichess formula) to 4.5 points. See scripts/README-calibration.md.
+//
+// An "eval" is always from WHITE's point of view: { cp } or { mate }
 // (mate > 0 = white mates in N, mate < 0 = black mates in N,
 //  mate === 0 = checkmate on the board, with `winner: "w"|"b"`).
 
-const CP_CAP = 1000;
+export const MODEL = {
+  // win-probability steepness, depends (slightly) on the mover's rating:
+  // k = exp(a0 + a1 * (rating - 1500) / 1000)
+  a0: -5.9383,
+  a1: -0.11756,
+  // per-move accuracy = c0 * exp(-b * winLoss) + (100 - c0)
+  b: 0.1145,
+  c0: 80.048,
+  // eval cap in centipawns (mates count as the cap)
+  cap: 4172,
+};
 
-/** Centipawns from white's POV, mate scores and extremes capped at ±1000. */
+const MATE_CP = 100000;
+
+/** Centipawns from white's POV; mates become huge values that the win curve saturates. */
 export function evalToCp(ev) {
   if (ev.mate !== undefined && ev.mate !== null) {
-    if (ev.mate === 0) return ev.winner === "b" ? -CP_CAP : CP_CAP;
-    return ev.mate > 0 ? CP_CAP : -CP_CAP;
+    if (ev.mate === 0) return ev.winner === "b" ? -MATE_CP : MATE_CP;
+    return ev.mate > 0 ? MATE_CP : -MATE_CP;
   }
-  return Math.max(-CP_CAP, Math.min(CP_CAP, ev.cp));
+  return ev.cp;
 }
 
-/** Winning chance for white in percent (0..100). */
-export function winPercent(cp) {
-  const c = Math.max(-CP_CAP, Math.min(CP_CAP, cp));
-  return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * c)) - 1);
+const steepness = (rating = 1500) => Math.exp(MODEL.a0 + (MODEL.a1 * (rating - 1500)) / 1000);
+
+/** Expected score for white in percent (0..100), from the perspective of a player of `rating`. */
+export function winPercent(cp, rating = 1500) {
+  const c = Math.max(-MODEL.cap, Math.min(MODEL.cap, cp));
+  return 100 / (1 + Math.exp(-steepness(rating) * c));
 }
 
 /** Accuracy of a single move (0..100) given the mover's win% before and after. */
 export function moveAccuracy(winBefore, winAfter) {
-  if (winAfter >= winBefore) return 100;
-  const diff = winBefore - winAfter;
-  const raw = 103.1668100711649 * Math.exp(-0.04354415386753951 * diff) - 3.166924740191411 + 1;
-  return Math.max(0, Math.min(100, raw));
+  const loss = Math.max(0, winBefore - winAfter);
+  return Math.max(0, Math.min(100, MODEL.c0 * Math.exp(-MODEL.b * loss) + (100 - MODEL.c0)));
 }
 
-// Lichess judges by winning-chance delta of 0.1 / 0.2 / 0.3 on a -1..1 scale,
-// which is 5 / 10 / 15 points on the 0..100 win% scale.
-export const THRESHOLDS = { inaccuracy: 5, mistake: 10, blunder: 15 };
+// chess.com's published "expected points lost" bands, on a 0..100 scale.
+export const THRESHOLDS = { excellent: 2, good: 5, inaccuracy: 10, mistake: 20 };
 
-export function classify(drop) {
-  if (drop >= THRESHOLDS.blunder) return "blunder";
-  if (drop >= THRESHOLDS.mistake) return "mistake";
-  if (drop >= THRESHOLDS.inaccuracy) return "inaccuracy";
-  return null;
+/** Label by expected-points loss only (no board context). */
+export function classifyLoss(drop) {
+  if (drop < 0.5) return "best";
+  if (drop < THRESHOLDS.excellent) return "excellent";
+  if (drop < THRESHOLDS.good) return "good";
+  if (drop < THRESHOLDS.inaccuracy) return "inaccuracy";
+  if (drop < THRESHOLDS.mistake) return "mistake";
+  return "blunder";
 }
-
-export const SYMBOL = { blunder: "??", mistake: "?", inaccuracy: "?!", missed: "💡" };
 
 const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
-const stddev = (xs) => {
-  const m = mean(xs);
-  return Math.sqrt(mean(xs.map((x) => (x - m) ** 2)));
-};
-const clamp = (x, lo, hi) => Math.max(lo, Math.min(hi, x));
 
 /**
  * Score a whole analyzed game.
- * @param {Array<{cp?:number, mate?:number}>} evals  white-POV evals for positions 0..N
- *        (position 0 = before the first move, position N = final position)
- * @param {"w"|"b"} firstMover  side to move in position 0
- * @returns per-move details + per-color summary
+ * @param {Array} evals       white-POV evals for positions 0..N
+ * @param {"w"|"b"} firstMover side to move in position 0
+ * @param {{w:number,b:number}} ratings  player ratings (shape the win curve)
  */
-export function scoreGame(evals, firstMover = "w") {
+export function scoreGame(evals, firstMover = "w", ratings = { w: 1500, b: 1500 }) {
   const cps = evals.map(evalToCp);
-  const wins = cps.map(winPercent); // white POV
-  const nMoves = evals.length - 1;
-
-  // Volatility weights (Lichess): std-dev of win% in a sliding window.
-  const windowSize = clamp(Math.floor(nMoves / 10), 2, 8);
-  const windows = [];
-  const firstWin = wins.slice(0, windowSize);
-  for (let i = 0; i < Math.min(windowSize, wins.length) - 2; i++) windows.push(firstWin);
-  for (let i = 0; i + windowSize <= wins.length; i++) windows.push(wins.slice(i, i + windowSize));
-  const weights = windows.map((w) => clamp(stddev(w), 0.5, 12));
+  const avgRating = (ratings.w + ratings.b) / 2;
+  const winPercents = cps.map((cp) => winPercent(cp, avgRating)); // for the graph
 
   const moves = [];
-  for (let i = 0; i < nMoves; i++) {
+  for (let i = 0; i < cps.length - 1; i++) {
     const color = (i % 2 === 0) === (firstMover === "w") ? "w" : "b";
+    const r = ratings[color];
     const sign = color === "w" ? 1 : -1;
-    const winBefore = color === "w" ? wins[i] : 100 - wins[i];
-    const winAfter = color === "w" ? wins[i + 1] : 100 - wins[i + 1];
+    const winBefore = winPercent(sign * cps[i], r);
+    const winAfter = winPercent(sign * cps[i + 1], r);
     const drop = Math.max(0, winBefore - winAfter);
-    const cpLoss = Math.max(0, sign * (cps[i] - cps[i + 1]));
-    const accuracy = moveAccuracy(winBefore, winAfter);
-    const judgement = classify(drop);
-
-    // Missed opportunity: you had a big advantage (or the opponent just erred)
-    // and your move threw a significant part of it away.
-    const prevWinForMover = i > 0 ? (color === "w" ? wins[i - 1] : 100 - wins[i - 1]) : winBefore;
-    const opponentJustErred = winBefore - prevWinForMover >= THRESHOLDS.mistake;
-    const missed =
-      drop >= THRESHOLDS.mistake &&
-      ((winBefore >= 70 && winAfter < 60) || opponentJustErred);
-
-    moves.push({
-      ply: i + 1,
-      color,
-      winBefore,
-      winAfter,
-      drop,
-      cpLoss: Math.min(cpLoss, CP_CAP),
-      accuracy,
-      weight: weights[i] ?? 1,
-      judgement,
-      missed,
-    });
+    const cpLoss = Math.min(1000, Math.max(0, sign * (clampCp(cps[i]) - clampCp(cps[i + 1]))));
+    moves.push({ ply: i + 1, color, winBefore, winAfter, drop, cpLoss, accuracy: moveAccuracy(winBefore, winAfter) });
   }
 
   const summary = {};
   for (const color of ["w", "b"]) {
     const mine = moves.filter((m) => m.color === color);
-    summary[color] = summarizeMoves(mine);
+    summary[color] = mine.length
+      ? {
+          // harmonic mean: one bad blunder weighs heavily, like on chess.com
+          accuracy: mine.length / mine.reduce((a, m) => a + 1 / Math.max(m.accuracy, 1), 0),
+          acpl: mean(mine.map((m) => m.cpLoss)),
+          moves: mine.length,
+        }
+      : { accuracy: null, acpl: null, moves: 0 };
   }
-  return { moves, summary, winPercents: wins };
+  return { moves, summary, winPercents };
 }
 
-function summarizeMoves(moves) {
-  if (!moves.length) {
-    return { accuracy: null, acpl: null, blunders: 0, mistakes: 0, inaccuracies: 0, missed: 0, moves: 0 };
-  }
-  const totalWeight = moves.reduce((a, m) => a + m.weight, 0);
-  const weighted = moves.reduce((a, m) => a + m.accuracy * m.weight, 0) / totalWeight;
-  const harmonic = moves.length / moves.reduce((a, m) => a + 1 / Math.max(m.accuracy, 1), 0);
-  return {
-    accuracy: (weighted + harmonic) / 2,
-    acpl: mean(moves.map((m) => m.cpLoss)),
-    blunders: moves.filter((m) => m.judgement === "blunder").length,
-    mistakes: moves.filter((m) => m.judgement === "mistake").length,
-    inaccuracies: moves.filter((m) => m.judgement === "inaccuracy").length,
-    missed: moves.filter((m) => m.missed).length,
-    moves: moves.length,
-  };
-}
+const clampCp = (cp) => Math.max(-1000, Math.min(1000, cp));
 
 /**
  * Very rough Elo estimate from average centipawn loss. Only meaningful when
@@ -135,7 +108,7 @@ function summarizeMoves(moves) {
  */
 export function estimateElo(acpl) {
   if (acpl === null || acpl === undefined || Number.isNaN(acpl)) return null;
-  return Math.round(clamp(3100 * Math.exp(-0.01 * acpl), 100, 3200));
+  return Math.round(Math.max(100, Math.min(3200, 3100 * Math.exp(-0.01 * acpl))));
 }
 
 /** Format a white-POV eval for display, e.g. "+1.25", "-0.40", "M3", "-M2". */

@@ -173,7 +173,7 @@ button.link { background: none; border: 0; color: var(--accent); cursor: pointer
 .sumtable td { font-variant-numeric: tabular-nums; }
 
 .graph-card { padding: 10px; }
-.evalgraph { width: 100%; height: 120px; display: block; border-radius: 6px; cursor: pointer; }
+.evalgraph { display: block; max-width: 100%; border-radius: 6px; cursor: pointer; }
 .evalgraph .bg { fill: var(--graph-black); }
 .evalgraph .white-area { fill: var(--graph-white); }
 .evalgraph .mid { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke; }
@@ -186,7 +186,7 @@ button.link { background: none; border: 0; color: var(--accent); cursor: pointer
 .graph-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; }
 .lg { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
 
-.moves { max-height: 360px; overflow-y: auto; }
+.moves { max-height: 360px; overflow-y: auto; position: relative; }
 .movegrid { display: grid; grid-template-columns: 36px 1fr 1fr; gap: 2px 4px; align-items: center; }
 .movegrid .num { color: var(--muted); font-size: 13px; text-align: right; padding-right: 4px; }
 .mv {
@@ -233,3 +233,54 @@ button.link { background: none; border: 0; color: var(--accent); cursor: pointer
   .brand { font-size: 14px; }
   .topbar nav a { padding: 6px 8px; font-size: 13px; }
 }
+
+/* ---- move labels (chess.com-style categories) ---- */
+:root {
+  --l-brilliant: #1fa99a; --l-great: #4f84b8; --l-best: #5f9c35; --l-excellent: #6fa83f; --l-good: #8c9a80;
+  --l-book: #a5855f; --l-forced: #8a8d86; --l-inaccuracy: #c99a12; --l-mistake: #e07a1f; --l-miss: #d9534a; --l-blunder: #c8312a;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --l-brilliant: #3fd1bf; --l-great: #7fb0e0; --l-best: #8cc65e; --l-excellent: #9bcf6c; --l-good: #a8b39d;
+    --l-book: #c9a57c; --l-forced: #a3a69d; --l-inaccuracy: #e8c04a; --l-mistake: #f39a4a; --l-miss: #f07a70; --l-blunder: #f0574d;
+  }
+}
+.lbl {
+  display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 3px; margin-left: 3px;
+  border-radius: 9px; font-size: 11px; font-weight: 800; line-height: 1; color: #fff; vertical-align: 1px;
+}
+.lbl-book.lbl { background: transparent; padding: 0; font-size: 12px; }
+.lbl.lbl-brilliant { background: var(--l-brilliant); }
+.lbl.lbl-great { background: var(--l-great); }
+.lbl.lbl-best { background: var(--l-best); }
+.lbl.lbl-excellent { background: var(--l-excellent); }
+.lbl.lbl-good { background: var(--l-good); }
+.lbl.lbl-forced { background: var(--l-forced); }
+.lbl.lbl-inaccuracy { background: var(--l-inaccuracy); }
+.lbl.lbl-mistake { background: var(--l-mistake); }
+.lbl.lbl-miss { background: var(--l-miss); }
+.lbl.lbl-blunder { background: var(--l-blunder); }
+.judge .lbl { margin-left: 0; margin-right: 2px; }
+.judge.lbl-brilliant { color: var(--l-brilliant); } .judge.lbl-great { color: var(--l-great); }
+.judge.lbl-best { color: var(--l-best); } .judge.lbl-excellent { color: var(--l-excellent); }
+.judge.lbl-good { color: var(--l-good); } .judge.lbl-book { color: var(--l-book); }
+.judge.lbl-forced { color: var(--l-forced); } .judge.lbl-inaccuracy { color: var(--l-inaccuracy); }
+.judge.lbl-mistake { color: var(--l-mistake); } .judge.lbl-miss { color: var(--l-miss); }
+.judge.lbl-blunder { color: var(--l-blunder); }
+.mv.cur .lbl { box-shadow: 0 0 0 1.5px var(--accent-ink); }
+
+.opening { margin-top: 2px; }
+.cc-line { text-align: center; margin: -4px 0 8px; }
+.lbltable { width: 100%; border-collapse: collapse; font-size: 14px; }
+.lbltable th { font-size: 12px; color: var(--muted); font-weight: 600; padding: 4px; }
+.lbltable td { padding: 5px 4px; border-bottom: 1px solid var(--border); text-align: center; font-variant-numeric: tabular-nums; width: 64px; }
+.lbltable td.lblcell { text-align: left; width: auto; }
+.lbltable td.lblcell .lbl { margin: 0 6px 0 0; }
+.lbltable tr.zero td { color: var(--muted); opacity: 0.6; }
+.lbltable tfoot td { border-bottom: 0; }
+
+.dot-brilliant { fill: var(--l-brilliant); background: var(--l-brilliant); }
+.dot-great { fill: var(--l-great); background: var(--l-great); }
+.dot-mistake { fill: var(--l-mistake); background: var(--l-mistake); }
+.dot-miss { fill: var(--l-miss); background: var(--l-miss); }
+.dot-blunder { fill: var(--l-blunder); background: var(--l-blunder); }

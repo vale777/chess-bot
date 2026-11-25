@@ -6,9 +6,10 @@ WebAssembly) analyzes them on the device you're using. There is no server and no
 account; analyses are cached in the browser (IndexedDB) per device.
 
 ## What it shows
-- Accuracy per game (Lichess formula; close to chess.com's, not identical)
-- Blunders `??`, mistakes `?`, inaccuracies `?!` (win-chance drop of ≥15 / ≥10 / ≥5 %)
-- Missed opportunities 💡: you threw away a winning position or didn't punish an opponent's mistake
+- Accuracy per game, using a formula calibrated against chess.com's own accuracy
+  numbers (typically within about ±5 points; see `scripts/README-calibration.md`)
+- chess.com-style move labels: Brilliant, Great, Best, Excellent, Good, Book,
+  Forced, Inaccuracy, Mistake, Miss, Blunder, plus the opening name
 - Best move and engine line for every move, an eval graph, and "Next mistake" navigation
 - Stats across all analyzed games: average accuracy, ACPL, blunders per game, a rough Elo estimate
 
@@ -28,6 +29,9 @@ npm test         # metric + real-engine tests
 Open that URL on your phone, set your username in Settings, and optionally use
 "Add to Home Screen".
 
-## License note
+## Credits / license
+Opening names come from the Lichess opening list (CC0), stored in
+`src/data/openings.json`. Regenerate it with `node scripts/build-openings.mjs`.
+
 Stockfish is GPLv3. The engine files are copied from the `stockfish` npm
 package at build time, and its license ships alongside (`stockfish/Copying.txt`).

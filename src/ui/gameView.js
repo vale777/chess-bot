@@ -3,7 +3,9 @@ import { Arrows, ARROW_TYPE } from "cm-chessboard/src/extensions/arrows/Arrows.j
 import { Markers, MARKER_TYPE } from "cm-chessboard/src/extensions/markers/Markers.js";
 import { Chess } from "chess.js";
 import { Engine, workerTransport, analyzeGame } from "../engine.js";
-import { scoreGame, formatEval, estimateElo, SYMBOL } from "../metrics.js";
+import { formatEval, estimateElo } from "../metrics.js";
+import { LABELS, LABEL_KEYS, NOTABLE } from "../classify.js";
+import { buildReport } from "../report.js";
 import { getGame, getAnalysis, saveAnalysis, deleteAnalysis, getSettings } from "../store.js";
 import { renderEvalGraph } from "./evalGraph.js";
 import { esc, fmtPct, fmtDate, RESULT_LABEL } from "./util.js";
@@ -14,14 +16,14 @@ const ENGINE_URL = `${import.meta.env.BASE_URL}stockfish/stockfish-19-lite-singl
 let enginePromise = null;
 function getEngine() {
   enginePromise ??= (async () => {
-    const e = new Engine(workerTransport(ENGINE_URL));
+    const e = new Engine(workerTransport(ENGINE_URL), { multiPV: 2 });
     await e.init();
     return e;
   })();
   return enginePromise;
 }
 
-const JUDGE_LABEL = { blunder: "Blunder", mistake: "Mistake", inaccuracy: "Inaccuracy" };
+const badge = (label) => `<span class="lbl lbl-${label}" title="${LABELS[label].name}">${LABELS[label].sym}</span>`;
 
 export async function renderGameView(root, id) {
   const game = await getGame(id);
@@ -37,7 +39,7 @@ export async function renderGameView(root, id) {
   const history = chess.history({ verbose: true });
   const fens = [history.length ? history[0].before : chess.fen(), ...history.map((m) => m.after)];
 
-  const state = { ply: fens.length - 1, analysis: null, scored: null, abort: null };
+  const state = { ply: fens.length - 1, analysis: null, report: null, abort: null };
 
   root.innerHTML = `
     <div class="game-head">
@@ -47,6 +49,7 @@ export async function renderGameView(root, id) {
           vs <b>${esc(game.opp.name)}</b> (${game.opp.rating})</div>
         <div class="muted small">${esc(game.timeClass)} · ${fmtDate(game.endTime)} · you played ${game.myColor === "w" ? "White" : "Black"} (${game.me.rating})
           · <a href="${esc(game.url)}" target="_blank" rel="noopener">open on chess.com ↗</a></div>
+        <div id="opening" class="small opening"></div>
       </div>
     </div>
     <div class="game-layout">
@@ -102,41 +105,48 @@ export async function renderGameView(root, id) {
       board.addMarker(MARKER_TYPE.square, m.from);
       board.addMarker(MARKER_TYPE.square, m.to);
 
-      if (!state.scored) {
+      if (!state.report) {
         info.innerHTML = `<b>${esc(label)}</b> <span class="muted">· analyze the game to see evaluations</span>`;
       } else {
-        const sm = state.scored.moves[state.ply - 1];
+        const sm = state.report.scored.moves[state.ply - 1];
+        const lab = state.report.labels[state.ply - 1];
         const best = state.analysis.best[state.ply - 1];
         const evBefore = state.analysis.evals[state.ply - 1];
         const evAfter = state.analysis.evals[state.ply];
         const isBest = best && best.uci === uciOf(m);
         const who = sm.color === game.myColor ? "You" : "Opponent";
-        const arrowType = { blunder: ARROW_TYPE.danger, mistake: ARROW_TYPE.danger, inaccuracy: ARROW_TYPE.warning }[sm.judgement] ?? ARROW_TYPE.info;
+        const arrowType =
+          { blunder: ARROW_TYPE.danger, miss: ARROW_TYPE.danger, mistake: ARROW_TYPE.warning, inaccuracy: ARROW_TYPE.warning }[lab] ??
+          (lab === "brilliant" || lab === "great" || lab === "best" ? ARROW_TYPE.success : ARROW_TYPE.info);
         board.addArrow(arrowType, m.from, m.to);
-        if (best && !isBest && best.uci?.length >= 4) board.addArrow(ARROW_TYPE.success, best.uci.slice(0, 2), best.uci.slice(2, 4));
+        const showBest = best && !isBest && best.uci?.length >= 4 && lab !== "book" && lab !== "forced";
+        if (showBest) board.addArrow(ARROW_TYPE.success, best.uci.slice(0, 2), best.uci.slice(2, 4));
 
-        const tag = sm.judgement
-          ? `<span class="judge ${sm.judgement}">${SYMBOL[sm.judgement]} ${JUDGE_LABEL[sm.judgement]}</span>`
-          : isBest ? `<span class="judge best">★ Best move</span>` : `<span class="judge good">✓ Good</span>`;
-        const missed = sm.missed ? `<span class="judge missed">💡 Missed opportunity</span>` : "";
         info.innerHTML = `
-          <div class="mi-top"><b>${esc(label)}</b> ${tag} ${missed}</div>
+          <div class="mi-top"><b>${esc(label)}</b> <span class="judge lbl-${lab}">${badge(lab)} ${LABELS[lab].name}</span></div>
           <div class="small">${who} played <b>${esc(m.san)}</b> → ${formatEval(evAfter)}
-            <span class="muted">(win chance ${fmtPct(sm.winBefore)}% → ${fmtPct(sm.winAfter)}%, accuracy ${fmtPct(sm.accuracy)}%)</span></div>
-          ${best && !isBest
+            <span class="muted">(winning chances ${fmtPct(sm.winBefore)}% → ${fmtPct(sm.winAfter)}%, move accuracy ${fmtPct(sm.accuracy)}%)</span></div>
+          ${showBest
             ? `<div class="small best-line">Best was <b>${esc(best.san)}</b> (${formatEval(evBefore)}) <span class="muted">${esc(best.pv.join(" "))}</span></div>`
             : ""}`;
       }
     }
     root.querySelectorAll(".mv").forEach((el) => el.classList.toggle("cur", Number(el.dataset.ply) === state.ply));
-    root.querySelector(`.mv[data-ply="${state.ply}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    if (state.scored) drawGraph();
+    // scroll only inside the move list box, never the page (keeps the board in view on phones)
+    const cur = root.querySelector(`.mv[data-ply="${state.ply}"]`);
+    const box = $("#moves");
+    if (cur && box) {
+      const top = cur.offsetTop; // .moves is position:relative
+      if (top < box.scrollTop) box.scrollTop = top - 8;
+      else if (top + cur.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = top + cur.offsetHeight - box.clientHeight + 8;
+    }
+    if (state.report) drawGraph();
   }
 
   function drawGraph() {
     const g = $("#graph");
     g.hidden = false;
-    renderEvalGraph(g, state.scored, state.ply, game.myColor, (p) => showPly(p));
+    renderEvalGraph(g, state.report, state.ply, game.myColor, (p) => showPly(p));
   }
 
   function renderMoves() {
@@ -146,11 +156,10 @@ export async function renderGameView(root, id) {
     let num = Number(fens[0].split(" ")[5]);
     const cell = (p) => {
       if (p > history.length) return `<span></span>`;
-      const sm = state.scored?.moves[p - 1];
-      const sym = sm?.judgement ? `<sup class="${sm.judgement}">${SYMBOL[sm.judgement]}</sup>` : "";
-      const miss = sm?.missed ? `<sup class="missed">💡</sup>` : "";
-      const mine = sm && sm.color === game.myColor ? "mine" : "";
-      return `<button class="mv ${mine} ${sm?.judgement ?? ""}" data-ply="${p}">${esc(history[p - 1].san)}${sym}${miss}</button>`;
+      const lab = state.report?.labels[p - 1];
+      const mine = state.report && state.report.scored.moves[p - 1].color === game.myColor ? "mine" : "";
+      const mark = lab && (NOTABLE.has(lab) || lab === "book") ? badge(lab) : "";
+      return `<button class="mv ${mine} ${lab ?? ""}" data-ply="${p}">${esc(history[p - 1].san)}${mark}</button>`;
     };
     if (blackFirst) {
       rows.push(`<span class="num">${num}.</span><span>…</span>${cell(1)}`);
@@ -162,31 +171,39 @@ export async function renderGameView(root, id) {
   }
 
   function renderSummary() {
-    if (!state.scored) {
+    const op = state.report?.opening;
+    $("#opening").innerHTML = op ? `📖 <span class="muted">${esc(op.eco)}</span> ${esc(op.name)}` : "";
+    if (!state.report) {
       $("#summary").innerHTML = "";
       return;
     }
-    const me = state.scored.summary[game.myColor];
-    const opp = state.scored.summary[game.myColor === "w" ? "b" : "w"];
+    const oppColor = game.myColor === "w" ? "b" : "w";
+    const me = state.report.scored.summary[game.myColor];
+    const opp = state.report.scored.summary[oppColor];
+    const cm = state.report.counts[game.myColor];
+    const co = state.report.counts[oppColor];
     const cc = game.chesscomAccuracy;
-    const row = (label, a, b, cls = "") => `<tr class="${cls}"><td>${label}</td><td>${a}</td><td>${b}</td></tr>`;
+    const labelRows = LABEL_KEYS.filter((k) => cm[k] || co[k] || !["forced"].includes(k))
+      .map((k) => `<tr class="${cm[k] || co[k] ? "" : "zero"}"><td>${cm[k]}</td><td class="lblcell">${badge(k)} ${LABELS[k].name}</td><td>${co[k]}</td></tr>`)
+      .join("");
     $("#summary").innerHTML = `
       <div class="card">
         <div class="acc-head">
           <div class="acc mine"><div class="big">${fmtPct(me.accuracy)}</div><div class="muted small">Your accuracy</div></div>
           <div class="acc"><div class="big">${fmtPct(opp.accuracy)}</div><div class="muted small">${esc(game.opp.name)}</div></div>
         </div>
-        <table class="sumtable">
-          <thead><tr><th></th><th>You</th><th>Opp.</th></tr></thead>
-          ${cc ? row("chess.com accuracy", fmtPct(cc.me), fmtPct(cc.opp), "muted") : ""}
-          ${row(`<span class="blunder">??</span> Blunders`, me.blunders, opp.blunders)}
-          ${row(`<span class="mistake">?</span> Mistakes`, me.mistakes, opp.mistakes)}
-          ${row(`<span class="inaccuracy">?!</span> Inaccuracies`, me.inaccuracies, opp.inaccuracies)}
-          ${row(`💡 Missed opportunities`, me.missed, opp.missed)}
-          ${row("Avg. centipawn loss", Math.round(me.acpl), Math.round(opp.acpl))}
-          ${row("Performance estimate*", estimateElo(me.acpl) ?? "–", estimateElo(opp.acpl) ?? "–")}
+        ${cc ? `<div class="muted small cc-line">chess.com: ${fmtPct(cc.me)} vs ${fmtPct(cc.opp)}</div>` : ""}
+        <table class="lbltable">
+          <thead><tr><th>You</th><th></th><th>Opp.</th></tr></thead>
+          <tbody>${labelRows}</tbody>
+          <tfoot>
+            <tr><td>${Math.round(me.acpl)}</td><td class="lblcell muted">Avg. centipawn loss</td><td>${Math.round(opp.acpl)}</td></tr>
+            <tr><td>${estimateElo(me.acpl) ?? "–"}</td><td class="lblcell muted">Performance estimate*</td><td>${estimateElo(opp.acpl) ?? "–"}</td></tr>
+          </tfoot>
         </table>
-        <p class="muted tiny">*Rough Elo guess from centipawn loss in this single game. It is only meaningful when averaged over many games (see Stats).</p>
+        <p class="muted tiny">*Rough Elo guess from centipawn loss in this single game, meaningful only when averaged over many games (see Stats).
+          Move labels follow chess.com's published descriptions; its exact rules are secret, so counts can differ slightly.
+          ${state.report.hasGreat ? "" : "<b>Re-analyze this game to detect “Great” moves.</b>"}</p>
       </div>`;
   }
 
@@ -198,7 +215,7 @@ export async function renderGameView(root, id) {
         <button id="reanalyze" class="link">Re-analyze</button></div>`;
       p.querySelector("#reanalyze").onclick = async () => {
         await deleteAnalysis(game.id);
-        state.analysis = state.scored = null;
+        state.analysis = state.report = null;
         renderAll();
         runAnalysis();
       };
@@ -213,7 +230,7 @@ export async function renderGameView(root, id) {
     renderAnalyzePanel();
     renderSummary();
     renderMoves();
-    if (!state.scored) $("#graph").hidden = true;
+    if (!state.report) $("#graph").hidden = true;
     showPly(state.ply);
   }
 
@@ -242,7 +259,7 @@ export async function renderGameView(root, id) {
       result.seconds = Math.round((performance.now() - t0) / 1000);
       await saveAnalysis(game.id, result);
       state.abort = null;
-      setAnalysis(result);
+      await setAnalysis(result);
       renderAll();
     } catch (e) {
       state.abort = null;
@@ -253,15 +270,18 @@ export async function renderGameView(root, id) {
     }
   }
 
-  function setAnalysis(a) {
+  async function setAnalysis(a) {
     state.analysis = a;
-    state.scored = scoreGame(a.evals, a.firstMover);
+    state.report = await buildReport(game, a);
   }
 
   function nextMistake() {
-    if (!state.scored) return;
-    const all = state.scored.moves.filter((m) => m.color === game.myColor && (m.judgement === "mistake" || m.judgement === "blunder" || m.missed));
-    const next = all.find((m) => m.ply > state.ply) ?? all[0];
+    if (!state.report) return;
+    const bad = new Set(["mistake", "blunder", "miss"]);
+    const all = state.report.labels
+      .map((l, i) => ({ l, ply: i + 1, color: state.report.scored.moves[i].color }))
+      .filter((x) => x.color === game.myColor && bad.has(x.l));
+    const next = all.find((x) => x.ply > state.ply) ?? all[0];
     if (next) showPly(next.ply);
   }
 
@@ -301,7 +321,7 @@ export async function renderGameView(root, id) {
 
   // ---- init -------------------------------------------------------------
   const cached = await getAnalysis(game.id);
-  if (cached) setAnalysis(cached);
+  if (cached) await setAnalysis(cached);
   renderAll();
 
   return () => {

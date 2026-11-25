@@ -2,7 +2,7 @@
 import { get, set, del, keys, getMany } from "idb-keyval";
 
 const isTouch = typeof matchMedia !== "undefined" && matchMedia("(pointer: coarse)").matches;
-const DEFAULT_SETTINGS = { username: "", depth: isTouch ? 12 : 16 };
+const DEFAULT_SETTINGS = { username: "", depth: isTouch ? 12 : 14 };
 
 export async function getSettings() {
   return { ...DEFAULT_SETTINGS, ...((await get("settings")) ?? {}) };

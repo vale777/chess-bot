@@ -15,19 +15,20 @@ export function workerTransport(url) {
 
 export function parseInfo(line) {
   if (!line.startsWith("info ") || !line.includes(" score ")) return null;
-  const multipv = line.match(/\bmultipv (\d+)/);
-  if (multipv && multipv[1] !== "1") return null;
+  const multipv = Number(line.match(/\bmultipv (\d+)/)?.[1] ?? 1);
   if (/\b(lowerbound|upperbound)\b/.test(line)) return null;
   const depth = Number(line.match(/\bdepth (\d+)/)?.[1] ?? 0);
   const score = line.match(/\bscore (cp|mate) (-?\d+)/);
   if (!score) return null;
   const pv = line.match(/\bpv (.+)$/)?.[1].trim().split(/\s+/) ?? [];
-  return { depth, kind: score[1], value: Number(score[2]), pv };
+  return { depth, multipv, kind: score[1], value: Number(score[2]), pv };
 }
 
 export class Engine {
-  constructor(transport) {
+  /** @param {{multiPV?: number}} opts  multiPV 2 lets us detect "only good move" (Great) moves */
+  constructor(transport, { multiPV = 1 } = {}) {
     this.t = transport;
+    this.multiPV = multiPV;
     this.listeners = new Set();
     this.queue = Promise.resolve();
     transport.onLine((line) => {
@@ -52,6 +53,7 @@ export class Engine {
     this.t.send("uci");
     await ok;
     this.t.send("setoption name Hash value 32");
+    this.t.send(`setoption name MultiPV value ${this.multiPV}`);
     await this.ready();
   }
 
@@ -67,14 +69,15 @@ export class Engine {
   }
 
   /**
-   * Evaluate one position. Returns { kind, value, pv, bestmove } from the
-   * side-to-move's point of view. Rejects with AbortError if `signal` fires.
+   * Evaluate one position. Returns { kind, value, pv, bestmove, second } from the
+   * side-to-move's point of view (`second` = 2nd-best line when MultiPV >= 2).
+   * Rejects with AbortError if `signal` fires.
    */
   evaluate(startFen, movesUci, depth, signal) {
-    let last = null;
+    const lines = [];
     const onInfo = (line) => {
       const info = parseInfo(line);
-      if (info) last = info;
+      if (info) lines[info.multipv] = info;
     };
     this.listeners.add(onInfo);
     const done = this.waitFor((l) => l.startsWith("bestmove"));
@@ -88,7 +91,8 @@ export class Engine {
       signal?.removeEventListener("abort", onAbort);
       if (signal?.aborted) throw new DOMException("Analysis cancelled", "AbortError");
       const bestmove = line.split(/\s+/)[1];
-      return { ...(last ?? { kind: "cp", value: 0, pv: [] }), bestmove };
+      const first = lines[1] ?? { kind: "cp", value: 0, pv: [] };
+      return { ...first, bestmove, second: lines[2] ?? null };
     });
   }
 
@@ -129,7 +133,8 @@ export function uciLineToSan(fen, uciMoves, max = 6) {
  *   startFen: string, firstMover: "w"|"b",
  *   moves: Array<{san, uci, from, to, before, after}>,
  *   evals: Array<{cp?:number, mate?:number, winner?:string}>,   // white POV, length = moves+1
- *   best:  Array<{uci, san, pv: string[]} | null>,                 // best move in position i
+ *   best:  Array<{uci, san, pv: string[], second?: eval|null} | null>,  // engine's choice in position i
+ *   legalCounts: number[],                                         // legal moves in position i
  *   depth: number
  * }}
  */
@@ -157,11 +162,13 @@ async function analyzeGameNow(engine, pgn, { depth = 14, onProgress, signal } = 
   const replay = new Chess(startFen);
   const evals = [];
   const best = [];
+  const legalCounts = [];
   for (let i = 0; i <= moves.length; i++) {
     if (signal?.aborted) throw new DOMException("Analysis cancelled", "AbortError");
     if (i > 0) replay.move(moves[i - 1].san);
     const fen = replay.fen();
     const stm = replay.turn();
+    legalCounts.push(replay.moves().length);
 
     if (replay.isCheckmate()) {
       evals.push({ mate: 0, winner: stm === "w" ? "b" : "w" });
@@ -174,9 +181,10 @@ async function analyzeGameNow(engine, pgn, { depth = 14, onProgress, signal } = 
       const sign = stm === "w" ? 1 : -1;
       evals.push(r.kind === "mate" ? { mate: sign * r.value } : { cp: sign * r.value });
       const pvSan = uciLineToSan(fen, r.pv.length ? r.pv : [r.bestmove]);
-      best.push({ uci: r.bestmove, san: pvSan[0] ?? r.bestmove, pv: pvSan });
+      const toWhite = (x) => (x.kind === "mate" ? { mate: sign * x.value } : { cp: sign * x.value });
+      best.push({ uci: r.bestmove, san: pvSan[0] ?? r.bestmove, pv: pvSan, second: r.second ? toWhite(r.second) : null });
     }
     onProgress?.(i, moves.length);
   }
-  return { startFen, firstMover, moves, evals, best, depth };
+  return { version: 2, startFen, firstMover, moves, evals, best, legalCounts, depth };
 }

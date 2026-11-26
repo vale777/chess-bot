@@ -30,8 +30,28 @@ Open that URL on your phone, set your username in Settings, and optionally use
 "Add to Home Screen".
 
 ## Credits / license
-Opening names come from the Lichess opening list (CC0), stored in
-`src/data/openings.json`. Regenerate it with `node scripts/build-openings.mjs`.
+This project's own code is under the ISC license (see `LICENSE`).
 
-Stockfish is GPLv3. The engine files are copied from the `stockfish` npm
-package at build time, and its license ships alongside (`stockfish/Copying.txt`).
+- **Stockfish 19** (GPLv3) by the Stockfish developers, WebAssembly build by
+  Nathan Rugg. The engine files are copied from the `stockfish` npm package at
+  build time, and its license ships alongside (`stockfish/Copying.txt`).
+  Source: <https://github.com/official-stockfish/Stockfish>,
+  <https://github.com/nmrugg/stockfish.js>. The engine runs as a separate
+  program in a Web Worker and talks to the app only through the UCI protocol.
+- **Chess pieces** by [Cburnett](https://en.wikipedia.org/wiki/User:Cburnett)
+  ([Wikimedia Commons](https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces/Standard)),
+  [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/), as adapted by
+  cm-chessboard. Only this piece set is published; cm-chessboard's other set
+  ("staunty", CC BY-NC-SA) is deliberately left out.
+- **Libraries:** cm-chessboard (MIT), chess.js (BSD-2-Clause), idb-keyval (Apache-2.0).
+- **Opening names:** Lichess opening list (CC0), stored in
+  `src/data/openings.json`. Regenerate it with `node scripts/build-openings.mjs`.
+- Move-label badges are plain text/Unicode symbols styled in CSS; the app uses no
+  third-party icons or sounds.
+
+`npm run copy-assets` (run automatically before `dev` and `build`) writes
+`THIRD_PARTY_LICENSES.txt` with the full license texts, and the build publishes it
+next to the app. The Settings page shows the credits and links to it.
+
+This is an independent hobby project and is not affiliated with, endorsed by, or
+sponsored by Chess.com. Game data comes from the public chess.com Published-Data API.

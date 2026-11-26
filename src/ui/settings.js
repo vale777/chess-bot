@@ -24,7 +24,21 @@ export async function renderSettings(root) {
       <p class="muted small">Analyses are stored only in this browser on this device. Clearing removes all saved analyses and settings.</p>
       <button id="clear" class="danger">Clear all data</button>
     </div>
-    <p class="muted tiny pad">Engine: Stockfish 19 (lite, WebAssembly, GPLv3) by the Stockfish developers and Nathan Rugg. Game data: chess.com Published-Data API.</p>`;
+    <div class="muted tiny pad credits">
+      <p><strong>Credits &amp; licenses</strong></p>
+      <p>Engine: <a href="https://github.com/official-stockfish/Stockfish" target="_blank" rel="noopener">Stockfish 19</a>
+        (lite, WebAssembly) by the Stockfish developers and Nathan Rugg
+        (<a href="https://github.com/nmrugg/stockfish.js" target="_blank" rel="noopener">source</a>),
+        <a href="${import.meta.env.BASE_URL}stockfish/Copying.txt" target="_blank">GPLv3</a>.</p>
+      <p>Chess pieces by <a href="https://en.wikipedia.org/wiki/User:Cburnett" target="_blank" rel="noopener">Cburnett</a>
+        (<a href="https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces/Standard" target="_blank" rel="noopener">Wikimedia Commons</a>),
+        <a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener">CC BY-SA 3.0</a>, adapted by cm-chessboard.</p>
+      <p>Libraries: cm-chessboard (MIT), chess.js (BSD-2-Clause), idb-keyval (Apache-2.0).
+        Opening names: Lichess opening list (CC0).
+        <a href="${import.meta.env.BASE_URL}THIRD_PARTY_LICENSES.txt" target="_blank">Full license texts</a>.</p>
+      <p>Game data: chess.com Published-Data API. This is an independent hobby project and is not
+        affiliated with, endorsed by, or sponsored by Chess.com.</p>
+    </div>`;
 
   root.querySelector("#f").addEventListener("submit", async (e) => {
     e.preventDefault();

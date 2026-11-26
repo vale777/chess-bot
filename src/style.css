@@ -284,3 +284,7 @@ button.link { background: none; border: 0; color: var(--accent); cursor: pointer
 .dot-mistake { fill: var(--l-mistake); background: var(--l-mistake); }
 .dot-miss { fill: var(--l-miss); background: var(--l-miss); }
 .dot-blunder { fill: var(--l-blunder); background: var(--l-blunder); }
+
+/* ---- credits (settings page) ---- */
+.credits p { margin: 0 0 6px; }
+.credits a { color: inherit; }
